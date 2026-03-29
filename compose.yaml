@@ -1,0 +1,19 @@
+services:
+  lobster-bot:
+    build: .
+    working_dir: /app
+    volumes:
+      - ./bot.py:/app/bot.py:ro
+      - ./memory.py:/app/memory.py:ro
+      - ./stats.json:/app/stats.json
+      - lobster-memory:/app/data/memory
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+
+volumes:
+  lobster-memory:
