@@ -30,7 +30,7 @@ SYSTEM_PROMPT = (
     "- Use [SEARCH] whenever the user asks about time-sensitive or current information\n"
     "- Do NOT guess or fabricate real-time data like weather, news, or prices\n"
     "- After receiving search results, answer naturally based on the data\n"
-    "- Always reply in ENGLISH by default, unless instructed otherwise via system message\n"
+    "- LANGUAGE RULE: Reply in ENGLISH by default. Even if the user writes in Chinese, reply in English. HOWEVER, if a later system message instructs you to reply in a specific language, ALWAYS obey that later instruction — it takes priority over this default.\n"
     "- Search query language rules are separate from reply language — always follow the search language rules above regardless of reply language\n"
     "- IMPORTANT: Write search queries in ENGLISH by default for better results, EXCEPT for China-specific topics (Chinese local weather, Chinese news, Chinese addresses, Chinese celebrities) which should use Chinese\n"
     "- Examples:\n"
@@ -64,8 +64,22 @@ TIER4_MICRO = [
     "liquid/lfm-2.5-1.2b-thinking:free",
 ]
 
-def get_model_order():
-    return TIER1 + TIER2 + TIER3_CN + TIER4_MICRO
+# 付费模型层 - 快速稳定，原生 function calling
+TIER0_PAID = [
+    "google/gemini-2.5-flash-lite",
+]
+
+# 支持 OpenAI function calling 的模型集合
+TOOL_CAPABLE = {
+    "google/gemini-2.5-flash-lite",
+}
+
+def get_model_order(needs_tools=False):
+    """根据任务类型选择模型顺序"""
+    if needs_tools:
+        return TIER0_PAID + TIER1 + TIER2
+    else:
+        return TIER1 + TIER2 + TIER3_CN + TIER4_MICRO + TIER0_PAID
 
 def short_name(model):
     return model.split("/")[-1].replace(":free", "")
@@ -153,12 +167,15 @@ def call_llm(messages, tools=None):
         "Content-Type": "application/json",
     }
     tried = []
-    for model in get_model_order():
+    for model in get_model_order(needs_tools=bool(tools)):
         payload = {
             "model": model,
             "messages": messages,
             "temperature": 0.6,
         }
+        if tools and model in TOOL_CAPABLE:
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
 
         try:
             r = requests.post(

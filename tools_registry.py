@@ -21,6 +21,10 @@ def get_tool_definitions():
 
 
 def execute_tool(name, arguments):
+    # 工具名别名（Gemini 有时会缩短工具名）
+    ALIASES = {"search": "web_search"}
+    name = ALIASES.get(name, name)
+
     if name not in TOOLS:
         return {"error": f"Unknown tool: {name}"}
     try:
