@@ -6,6 +6,8 @@ import threading
 import requests
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import memory
+import tools  # noqa: F401 - auto-register all tool modules
+from tool_calling_loop import chat_with_tools
 
 # ── Config ──────────────────────────────────────────
 BUSY = False
@@ -52,6 +54,15 @@ def get_model_order():
 
 def short_name(model):
     return model.split("/")[-1].replace(":free", "")
+
+
+# 支持 OpenAI function calling 的模型集合
+# 不在此集合中的模型调用时不传 tools 参数，走普通对话
+TOOL_CAPABLE = {
+    "google/gemma-3-12b-it:free",
+    "z-ai/glm-4.5-air:free",
+    # 新模型需实际测试确认后再加入
+}
 
 
 # ── Stats (持久化 JSON, total 永不清零) ──────────────
@@ -106,11 +117,8 @@ def reset_current():
 
 
 # ── LLM (分层 fallback) ────────────────────────────
-def call_llm(prompt, chat_id=None):
-    headers = {
-        "Authorization": f"Bearer {OR_KEY}",
-        "Content-Type": "application/json",
-    }
+def build_messages(prompt, chat_id=None):
+    """从用户输入和记忆上下文构建消息列表"""
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     if chat_id:
         summary = memory.get_stage_summary(str(chat_id))
@@ -119,6 +127,22 @@ def call_llm(prompt, chat_id=None):
         window = memory.get_sliding_window(str(chat_id))
         messages.extend(window)
     messages.append({"role": "user", "content": prompt})
+    return messages
+
+
+def call_llm(messages, tools=None):
+    """
+    调用 LLM（带 fallback 链）。
+    参数:
+        messages: 完整消息列表
+        tools: OpenAI 格式的工具定义列表（可选）
+    返回: (message_dict, status_string)
+        message_dict 包含 content 和/或 tool_calls
+    """
+    headers = {
+        "Authorization": f"Bearer {OR_KEY}",
+        "Content-Type": "application/json",
+    }
     tried = []
     for model in get_model_order():
         payload = {
@@ -126,6 +150,10 @@ def call_llm(prompt, chat_id=None):
             "messages": messages,
             "temperature": 0.6,
         }
+        if tools and model in TOOL_CAPABLE:
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
+
         try:
             r = requests.post(
                 "https://openrouter.ai/api/v1/chat/completions",
@@ -142,7 +170,7 @@ def call_llm(prompt, chat_id=None):
             print(f"ok: {model}", flush=True)
             skip = f" (skip: {', '.join(tried)})" if tried else ""
             status = f"\n\n🤖 {used}{skip}"
-            return r.json()["choices"][0]["message"]["content"], status
+            return r.json()["choices"][0]["message"], status
         except Exception as e:
             print(f"exc on {model}: {e}", flush=True)
             record(model, False)
@@ -183,7 +211,8 @@ class APIHandler(BaseHTTPRequestHandler):
         if not prompt:
             return self._json(400, {"error": "empty prompt"})
         try:
-            reply, status = call_llm(prompt)
+            messages = build_messages(prompt)
+            reply, status = chat_with_tools(call_llm, messages)
             self._json(200, {"reply": reply, "model": status.strip()})
         except Exception as e:
             self._json(500, {"error": str(e)})
@@ -213,6 +242,25 @@ class APIHandler(BaseHTTPRequestHandler):
 def main():
     global BUSY
     print("booting v2...", flush=True)
+
+    # 启动时清空 Telegram 积压的旧消息（防止重启后第一条消息丢失）
+    try:
+        flush = requests.get(
+            f"https://api.telegram.org/bot{TG_TOKEN}/getUpdates",
+            params={"offset": -1}, timeout=10
+        ).json()
+        if flush.get("result"):
+            last_id = flush["result"][-1]["update_id"]
+            requests.get(
+                f"https://api.telegram.org/bot{TG_TOKEN}/getUpdates",
+                params={"offset": last_id + 1}, timeout=10
+            )
+            print(f"flushed updates up to {last_id}", flush=True)
+        else:
+            print("no pending updates to flush", flush=True)
+    except Exception as e:
+        print(f"flush failed: {e}", flush=True)
+
     threading.Thread(
         target=lambda: HTTPServer(("0.0.0.0", 8080), APIHandler).serve_forever(),
         daemon=True,
@@ -273,7 +321,8 @@ def main():
                     cid = str(msg["chat"]["id"])
                     tg_send("🦞💭...")
                     memory.add_user_message(cid, cmd)
-                    reply, status = call_llm(cmd, chat_id=cid)
+                    messages = build_messages(cmd, chat_id=cid)
+                    reply, status = chat_with_tools(call_llm, messages)
                     memory.add_assistant_message(cid, reply)
                     tg_send(reply[:3400] + status)
                     print(f"reply sent, BUSY={BUSY}", flush=True)

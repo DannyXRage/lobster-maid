@@ -5,6 +5,9 @@ services:
     volumes:
       - ./bot.py:/app/bot.py:ro
       - ./memory.py:/app/memory.py:ro
+      - ./tools_registry.py:/app/tools_registry.py:ro
+      - ./tool_calling_loop.py:/app/tool_calling_loop.py:ro
+      - ./tools:/app/tools:ro
       - ./stats.json:/app/stats.json
       - lobster-memory:/app/data/memory
     ports:
