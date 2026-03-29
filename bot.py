@@ -18,17 +18,34 @@ API_KEY = os.environ.get("LOBSTER_API_KEY", "")
 TG_API = "https://api.telegram.org/bot" + TG_TOKEN
 STATS_FILE = "/app/stats.json"
 
+# 回复语言模式：默认英文，?chinese on 切中文
+CHINESE_MODE = {}
+
 SYSTEM_PROMPT = (
     "You are LobsterMaid, a helpful and concise assistant. "
-    "Reply in the same language the user writes in. "
-    "Keep answers brief and to the point unless the user asks for detail."
+    "Keep answers brief and to the point unless the user asks for detail.\n\n"
+    "You have access to a web search tool. When you need current or real-time information (today's weather, latest news, current prices, live scores, recent events, etc.), respond with ONLY this tag on a single line:\n"
+    "[SEARCH: your search query]\n\n"
+    "Rules:\n"
+    "- Use [SEARCH] whenever the user asks about time-sensitive or current information\n"
+    "- Do NOT guess or fabricate real-time data like weather, news, or prices\n"
+    "- After receiving search results, answer naturally based on the data\n"
+    "- Always reply in ENGLISH by default, unless instructed otherwise via system message\n"
+    "- Search query language rules are separate from reply language — always follow the search language rules above regardless of reply language\n"
+    "- IMPORTANT: Write search queries in ENGLISH by default for better results, EXCEPT for China-specific topics (Chinese local weather, Chinese news, Chinese addresses, Chinese celebrities) which should use Chinese\n"
+    "- Examples:\n"
+    "  - \"湖人比赛结果\" → [SEARCH: Lakers latest game result 2026]\n"
+    "  - \"比特币价格\" → [SEARCH: Bitcoin price today]\n"
+    "  - \"今天上海天气\" → [SEARCH: 上海天气预报 今天]  (China-specific → Chinese)\n"
+    "  - \"最近有什么大新闻\" → [SEARCH: latest world news today]\n"
+    "  - \"故宫开放时间\" → [SEARCH: 故宫 开放时间 2026]  (China-specific → Chinese)"
 )
 
 # ── Model Tiers ─────────────────────────────────────
 # T1: 主力（每次随机排序，分散负载）
 TIER1 = [
-    "nvidia/nemotron-3-super-120b-a12b:free",
     "arcee-ai/trinity-large-preview:free",
+    "nvidia/nemotron-3-super-120b-a12b:free",
     "google/gemma-3-12b-it:free",
 ]
 # T2: 海外备选（固定顺序）
@@ -48,21 +65,10 @@ TIER4_MICRO = [
 ]
 
 def get_model_order():
-    t1 = TIER1.copy()
-    random.shuffle(t1)
-    return t1 + TIER2 + TIER3_CN + TIER4_MICRO
+    return TIER1 + TIER2 + TIER3_CN + TIER4_MICRO
 
 def short_name(model):
     return model.split("/")[-1].replace(":free", "")
-
-
-# 支持 OpenAI function calling 的模型集合
-# 不在此集合中的模型调用时不传 tools 参数，走普通对话
-TOOL_CAPABLE = {
-    "google/gemma-3-12b-it:free",
-    "z-ai/glm-4.5-air:free",
-    # 新模型需实际测试确认后再加入
-}
 
 
 # ── Stats (持久化 JSON, total 永不清零) ──────────────
@@ -126,6 +132,9 @@ def build_messages(prompt, chat_id=None):
             messages.append({"role": "system", "content": f"[Stage Summary]\n{summary}"})
         window = memory.get_sliding_window(str(chat_id))
         messages.extend(window)
+    # 注入回复语言指令
+    if chat_id and CHINESE_MODE.get(str(chat_id)):
+        messages.append({"role": "system", "content": "IMPORTANT: Reply in Chinese (中文) for this conversation. Search queries should still follow the search language rules (English by default, China-specific in Chinese)."})
     messages.append({"role": "user", "content": prompt})
     return messages
 
@@ -150,14 +159,11 @@ def call_llm(messages, tools=None):
             "messages": messages,
             "temperature": 0.6,
         }
-        if tools and model in TOOL_CAPABLE:
-            payload["tools"] = tools
-            payload["tool_choice"] = "auto"
 
         try:
             r = requests.post(
                 "https://openrouter.ai/api/v1/chat/completions",
-                headers=headers, json=payload, timeout=60,
+                headers=headers, json=payload, timeout=30,
             )
             if r.status_code in (429, 404, 400):
                 print(f"{r.status_code} on {model}", flush=True)
@@ -308,8 +314,17 @@ def main():
                     memory.clear_memory(str(msg["chat"]["id"]))
                     tg_send("记忆已清空（滑动窗口 + 阶段摘要）")
                     continue
+                cid = str(msg["chat"]["id"])
+                if cmd.lower() in ("chinese on", "中文模式"):
+                    CHINESE_MODE[cid] = True
+                    tg_send("🦞 Chinese mode ON 🇨🇳 回复语言已切换为中文")
+                    continue
+                elif cmd.lower() in ("chinese off", "英文模式"):
+                    CHINESE_MODE.pop(cid, None)
+                    tg_send("🦞 Chinese mode OFF 🇺🇸 Reply language switched to English")
+                    continue
                 if cmd == "mi":
-                    info = memory.get_memory_info(str(msg["chat"]["id"]))
+                    info = memory.get_memory_info(cid)
                     tg_send(info)
                     continue
 
@@ -318,7 +333,6 @@ def main():
                     continue
                 BUSY = True
                 try:
-                    cid = str(msg["chat"]["id"])
                     tg_send("🦞💭...")
                     memory.add_user_message(cid, cmd)
                     messages = build_messages(cmd, chat_id=cid)

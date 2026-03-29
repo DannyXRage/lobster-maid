@@ -1,45 +1,37 @@
-"""Tool Calling 调度循环 - 处理多轮工具调用"""
+"""Prompt-based Tool Calling - 通过文本模式匹配触发工具调用"""
+import re
 import json
-from tools_registry import get_tool_definitions, execute_tool
+from tools_registry import execute_tool
 
-MAX_TOOL_ROUNDS = 5
+MAX_TOOL_ROUNDS = 3
+SEARCH_PATTERN = re.compile(r'\[SEARCH:\s*(.+?)\]', re.IGNORECASE)
 
 
 def chat_with_tools(call_fn, messages):
     """
-    带工具调用的多轮对话。
+    Prompt-based 工具调用循环。
+    检测模型输出中的 [SEARCH: query] 标记，执行搜索后回传结果。
     call_fn(messages, tools) -> (msg_dict, status_str)
     返回 (content_str, status_str)
     """
-    tools = get_tool_definitions()
-
     for round_num in range(MAX_TOOL_ROUNDS):
-        msg, status = call_fn(messages, tools if tools else None)
+        msg, status = call_fn(messages, None)
+        content = msg.get("content", "") or ""
 
-        tool_calls = msg.get("tool_calls")
-        if not tool_calls:
-            return msg.get("content", ""), status
+        match = SEARCH_PATTERN.search(content)
+        if not match:
+            return content, status
 
-        messages.append(msg)
-
-        for tc in tool_calls:
-            fn_name = tc["function"]["name"]
-            try:
-                args = json.loads(tc["function"]["arguments"])
-            except (json.JSONDecodeError, KeyError):
-                args = {}
-
-            print(f"[tool] {fn_name}({args})", flush=True)
-            result = execute_tool(fn_name, args)
-
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tc["id"],
-                "content": json.dumps(result, ensure_ascii=False),
-            })
-
+        query = match.group(1).strip()
+        print(f"[tool] web_search('{query}')", flush=True)
+        result = execute_tool("web_search", {"query": query})
         print(f"[tool] round {round_num + 1}/{MAX_TOOL_ROUNDS} done", flush=True)
 
-    print("[tool] max rounds reached, final call without tools", flush=True)
+        messages.append({"role": "assistant", "content": content})
+        messages.append({
+            "role": "user",
+            "content": f"[Search Results]\n{json.dumps(result, ensure_ascii=False)}\n\nBased on these search results, answer my original question naturally in the same language I used. Do not use [SEARCH] again unless absolutely necessary.",
+        })
+
     msg, status = call_fn(messages, None)
     return msg.get("content", ""), status
