@@ -70,6 +70,11 @@ def get_stage_summary(chat_id):
     data = _load(chat_id)
     return data.get("stage_summary", "")
 
+def clear_sliding_window(chat_id):
+    data = _load(chat_id)
+    data["history"] = []
+    _save(chat_id, data)
+
 def set_stage_summary(chat_id, summary):
     data = _load(chat_id)
     data["stage_summary"] = summary[:MAX_SUMMARY_CHARS]

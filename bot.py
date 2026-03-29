@@ -21,6 +21,10 @@ STATS_FILE = "/app/stats.json"
 # 回复语言模式：默认英文，?chinese on 切中文
 CHINESE_MODE = {}
 
+# 语言规则模板（英文默认 / 中文模式）
+LANG_RULE_EN = "LANGUAGE RULE: Reply in ENGLISH by default. Even if the user writes in Chinese, reply in English."
+LANG_RULE_CN = "LANGUAGE RULE: Reply in CHINESE (中文) by default. Even if the user writes in English, reply in Chinese."
+
 SYSTEM_PROMPT = (
     "You are LobsterMaid, a helpful and concise assistant. "
     "Keep answers brief and to the point unless the user asks for detail.\n\n"
@@ -30,7 +34,7 @@ SYSTEM_PROMPT = (
     "- Use [SEARCH] whenever the user asks about time-sensitive or current information\n"
     "- Do NOT guess or fabricate real-time data like weather, news, or prices\n"
     "- After receiving search results, answer naturally based on the data\n"
-    "- LANGUAGE RULE: Reply in ENGLISH by default. Even if the user writes in Chinese, reply in English. HOWEVER, if a later system message instructs you to reply in a specific language, ALWAYS obey that later instruction — it takes priority over this default.\n"
+    "- {LANG_RULE}\n"
     "- Search query language rules are separate from reply language — always follow the search language rules above regardless of reply language\n"
     "- IMPORTANT: Write search queries in ENGLISH by default for better results, EXCEPT for China-specific topics (Chinese local weather, Chinese news, Chinese addresses, Chinese celebrities) which should use Chinese\n"
     "- Examples:\n"
@@ -68,6 +72,9 @@ TIER4_MICRO = [
 TIER0_PAID = [
     "google/gemini-2.5-flash-lite",
 ]
+
+# 临时升级模型（?smart 触发）
+SMART_MODEL = "google/gemini-2.5-flash"
 
 # 支持 OpenAI function calling 的模型集合
 TOOL_CAPABLE = {
@@ -139,16 +146,34 @@ def reset_current():
 # ── LLM (分层 fallback) ────────────────────────────
 def build_messages(prompt, chat_id=None):
     """从用户输入和记忆上下文构建消息列表"""
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    # 根据语言模式选择规则
+    is_chinese = chat_id and CHINESE_MODE.get(str(chat_id))
+    if is_chinese:
+        lang_rule = LANG_RULE_CN
+    else:
+        lang_rule = LANG_RULE_EN
+
+    # 替换占位符
+    sys_prompt = SYSTEM_PROMPT.replace("{LANG_RULE}", lang_rule)
+
+    # 调试日志：确认替换是否生效
+    if "{LANG_RULE}" in sys_prompt:
+        print(f"[WARN] LANG_RULE placeholder NOT replaced!", flush=True)
+    else:
+        mode = "CN" if is_chinese else "EN"
+        print(f"[lang] mode={mode}, rule applied", flush=True)
+
+    messages = [{"role": "system", "content": sys_prompt}]
     if chat_id:
         summary = memory.get_stage_summary(str(chat_id))
         if summary:
             messages.append({"role": "system", "content": f"[Stage Summary]\n{summary}"})
         window = memory.get_sliding_window(str(chat_id))
         messages.extend(window)
-    # 注入回复语言指令
-    if chat_id and CHINESE_MODE.get(str(chat_id)):
-        messages.append({"role": "system", "content": "IMPORTANT: Reply in Chinese (中文) for this conversation. Search queries should still follow the search language rules (English by default, China-specific in Chinese)."})
+
+    # 双保险：在用户消息前再注入一次强制语言指令
+    if is_chinese:
+        messages.append({"role": "system", "content": "[OVERRIDE] You MUST reply in Chinese (中文). This overrides all previous language rules."})
     messages.append({"role": "user", "content": prompt})
     return messages
 
@@ -340,7 +365,74 @@ def main():
                     CHINESE_MODE.pop(cid, None)
                     tg_send("🦞 Chinese mode OFF 🇺🇸 Reply language switched to English")
                     continue
-                if cmd == "mi":
+                elif cmd.lower().startswith("smart"):
+                    smart_query = cmd[5:].strip()
+                    if not smart_query:
+                        tg_send("🦞 用法: ?smart 你的问题")
+                    else:
+                        tg_send("🦞🧠 Thinking...")
+                        memory.add_user_message(cid, smart_query)
+                        messages = build_messages(smart_query, chat_id=cid)
+                        # 临时用强模型
+                        def smart_call(msgs, tools=None):
+                            headers = {
+                                "Authorization": f"Bearer {OR_KEY}",
+                                "Content-Type": "application/json",
+                            }
+                            payload = {
+                                "model": SMART_MODEL,
+                                "messages": msgs,
+                                "temperature": 0.6,
+                            }
+                            if tools:
+                                payload["tools"] = tools
+                                payload["tool_choice"] = "auto"
+                            r = requests.post(
+                                "https://openrouter.ai/api/v1/chat/completions",
+                                headers=headers, json=payload, timeout=90,
+                            )
+                            r.raise_for_status()
+                            record(SMART_MODEL, True)
+                            print(f"ok: {SMART_MODEL} (smart)", flush=True)
+                            return r.json()["choices"][0]["message"], f"\n\n🧠 {SMART_MODEL.split('/')[-1]}"
+                        from tool_calling_loop import chat_with_tools as cwt
+                        try:
+                            reply, status = cwt(smart_call, messages)
+                            memory.add_assistant_message(cid, reply)
+                            tg_send(reply[:3400] + status)
+                        except Exception as e:
+                            print(f"smart error: {e}", flush=True)
+                            tg_send(f"🦞 Smart mode failed: {e}\n回退到普通模式...")
+                            messages2 = build_messages(smart_query, chat_id=cid)
+                            reply, status = chat_with_tools(call_llm, messages2)
+                            memory.add_assistant_message(cid, reply)
+                            tg_send(reply[:3400] + status)
+                    continue
+                elif cmd.lower() in ("ms", "摘要"):
+                    window = memory.get_sliding_window(cid)
+                    if not window or len(window) < 4:
+                        tg_send("🦞 对话太短，不需要生成摘要")
+                    else:
+                        tg_send("🦞📝 Generating summary...")
+                        summary_prompt = [
+                            {"role": "system", "content": "You are a conversation summarizer. Summarize the following conversation into a concise paragraph (2-5 sentences) capturing the key topics, decisions, and any action items. Write in the same language the conversation primarily uses."},
+                        ] + window + [
+                            {"role": "user", "content": "Please summarize our conversation above."},
+                        ]
+                        try:
+                            msg, status = call_llm(summary_prompt, None)
+                            summary_text = msg.get("content", "")
+                            if summary_text:
+                                memory.set_stage_summary(cid, summary_text)
+                                memory.clear_sliding_window(cid)
+                                tg_send(f"🦞✅ Stage summary saved, window cleared.\n\n📋 Summary:\n{summary_text[:2000]}{status}")
+                            else:
+                                tg_send("🦞 Failed to generate summary (empty response)")
+                        except Exception as e:
+                            print(f"ms error: {e}", flush=True)
+                            tg_send(f"🦞 Summary failed: {e}")
+                    continue
+                elif cmd.lower() == "mi":
                     info = memory.get_memory_info(cid)
                     tg_send(info)
                     continue
