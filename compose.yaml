@@ -19,6 +19,8 @@ services:
       - ./stats.json:/app/stats.json
       - ./auth:/app/auth
       - lobster-memory:/app/data/memory
+      - /var/run/docker.sock:/var/run/docker.sock  # Docker 命令支持
+      - ./:/app/lobster-src:ro                      # 源码只读访问
     ports:
       - "8080:8080"
     env_file:
