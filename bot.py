@@ -59,6 +59,8 @@ SYSTEM_PROMPT = (
     "- User asks to search for information (no specific URL) → use web_search\n"
     "- User asks to check if a link works → use check_alive\n"
     "- When in doubt between web_fetch and http_request for a URL: use web_fetch\n"
+    "- If web_fetch returns empty/very short content for a URL → the page likely uses JavaScript rendering → retry with render_spa\n"
+    "- render_spa uses a real browser (slower, heavier) — only use as fallback when web_fetch fails, not as first choice\n"
     "- NEVER skip tool calls and say a tool is 'not available'. All 4 tools are ALWAYS available.\n\n"
     "HTTP REQUEST RULES:\n"
     "You have the http_request tool for calling APIs and web services.\n"
