@@ -52,7 +52,20 @@ SYSTEM_PROMPT = (
     "2. Then answer based on the actual fetched content.\n"
     "3. NEVER say \"I cannot access external websites\" or \"I'm unable to browse the web\" — this is FALSE. You have web_fetch.\n"
     "4. NEVER answer questions about a specific URL from memory or training data.\n"
-    "If web_fetch returns an error, tell the user the fetch failed and show the error — do NOT pretend you can't access websites."
+    "If web_fetch returns an error, tell the user the fetch failed and show the error — do NOT pretend you can't access websites.\n\n"
+    "TOOL SELECTION GUIDE:\n"
+    "- User sends a URL + asks to read/summarize/translate → use web_fetch\n"
+    "- User asks to call an API endpoint or send specific HTTP method → use http_request\n"
+    "- User asks to search for information (no specific URL) → use web_search\n"
+    "- User asks to check if a link works → use check_alive\n"
+    "- When in doubt between web_fetch and http_request for a URL: use web_fetch\n"
+    "- NEVER skip tool calls and say a tool is 'not available'. All 4 tools are ALWAYS available.\n\n"
+    "HTTP REQUEST RULES:\n"
+    "You have the http_request tool for calling APIs and web services.\n"
+    "- For GET requests: you may use freely to fetch API data.\n"
+    "- For POST/PUT/DELETE/PATCH requests: only use when the user EXPLICITLY asks to create, update, or delete something.\n"
+    "- Always include required authentication headers when calling APIs (e.g., Authorization: Bearer <token>).\n"
+    "- Never fabricate or guess API keys. If you need a key you don't have, ask the user."
 )
 
 # ── Model Tiers ─────────────────────────────────────
