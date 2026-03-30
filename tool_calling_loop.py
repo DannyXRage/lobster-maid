@@ -13,9 +13,11 @@ def chat_with_tools(call_fn, messages):
     - 付费模型走方案A：OpenAI function calling（tool_calls 字段）
     - 免费模型走方案B：prompt-based（[SEARCH: query] 正则匹配）
     call_fn(messages, tools) -> (msg_dict, status_str)
-    返回 (content_str, status_str)
+    返回 (content_str, status_str, pending_files)
+        pending_files: [{"file_path": str, "file_type": str}, ...]
     """
     tools = get_tool_definitions()
+    pending_files = []
 
     for round_num in range(MAX_TOOL_ROUNDS):
         msg, status = call_fn(messages, tools if tools else None)
@@ -33,6 +35,14 @@ def chat_with_tools(call_fn, messages):
                     args = {}
                 print(f"[tool-A] {fn_name}({args})", flush=True)
                 result = execute_tool(fn_name, args)
+                
+                # 检查是否有文件返回
+                if isinstance(result, dict) and result.get("file_path"):
+                    pending_files.append({
+                        "file_path": result["file_path"],
+                        "file_type": result.get("file_type", "document"),
+                    })
+                
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc["id"],
@@ -56,8 +66,8 @@ def chat_with_tools(call_fn, messages):
             continue
 
         # 无工具调用，直接返回
-        return content, status
+        return content, status, pending_files
 
     # 超过最大轮数
     msg, status = call_fn(messages, None)
-    return msg.get("content", ""), status
+    return msg.get("content", ""), status, pending_files

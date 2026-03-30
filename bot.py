@@ -61,6 +61,9 @@ SYSTEM_PROMPT = (
     "- When in doubt between web_fetch and http_request for a URL: use web_fetch\n"
     "- If web_fetch returns empty/very short content for a URL → the page likely uses JavaScript rendering → retry with render_spa\n"
     "- render_spa uses a real browser (slower, heavier) — only use as fallback when web_fetch fails, not as first choice\n"
+    "- screenshot: take a full-page PNG screenshot of any URL → image is sent directly to chat\n"
+    "- to_pdf: save any URL as a PDF document → file is sent directly to chat\n"
+    "- screenshot and to_pdf both use Playwright (same as render_spa) — use when user explicitly asks for screenshot/PDF/archive\n"
     "- NEVER skip tool calls and say a tool is 'not available'. All 4 tools are ALWAYS available.\n\n"
     "HTTP REQUEST RULES:\n"
     "You have the http_request tool for calling APIs and web services.\n"
@@ -270,6 +273,83 @@ def tg_send(text):
         print(f"tg_send fail: {e}", flush=True)
 
 
+def tg_send_photo(chat_id, file_path, caption=""):
+    """发送图片到 Telegram，失败则回退为文件发送"""
+    url = f"https://api.telegram.org/bot{TG_TOKEN}/sendPhoto"
+    try:
+        with open(file_path, "rb") as f:
+            resp = requests.post(url, data={"chat_id": chat_id, "caption": caption[:1024]}, files={"photo": f})
+        result = resp.json()
+        if result.get("ok"):
+            return result
+        # sendPhoto 失败（图片太大等），回退为 document
+        print(f"[TG] sendPhoto failed: {result.get('description','?')}, falling back to sendDocument", flush=True)
+        return tg_send_document(chat_id, file_path, caption)
+    except Exception as e:
+        print(f"tg_send_photo fail: {e}", flush=True)
+        return None
+
+
+def tg_send_document(chat_id, file_path, caption=""):
+    """发送文件到 Telegram"""
+    url = f"https://api.telegram.org/bot{TG_TOKEN}/sendDocument"
+    try:
+        with open(file_path, "rb") as f:
+            resp = requests.post(url, data={"chat_id": chat_id, "caption": caption[:1024]}, files={"document": f})
+        result = resp.json()
+        if not result.get("ok"):
+            print(f"[TG] sendDocument failed: {result.get('description','?')}", flush=True)
+        return result
+    except Exception as e:
+        print(f"tg_send_document fail: {e}", flush=True)
+        return {"error": str(e)}
+
+
+def send_reply_with_files(chat_id, reply, status, pending_files):
+    """发送回复文本和待发送的文件"""
+    if not pending_files:
+        # 没有文件，只发文本
+        if reply:
+            tg_send(reply[:3400] + status)
+    else:
+        # 有文件的情况
+        if len(reply) < 200:
+            # 短回复：作为 caption 附在第一个文件上，不单独发文本
+            first_file = pending_files[0]
+            caption = reply[:200] + status if reply else ""
+            if first_file["file_type"] == "photo":
+                tg_send_photo(chat_id, first_file["file_path"], caption)
+            else:
+                tg_send_document(chat_id, first_file["file_path"], caption)
+            # 删除第一个文件
+            try:
+                os.remove(first_file["file_path"])
+            except OSError:
+                pass
+            # 发送其余文件
+            for f in pending_files[1:]:
+                if f["file_type"] == "photo":
+                    tg_send_photo(chat_id, f["file_path"])
+                else:
+                    tg_send_document(chat_id, f["file_path"])
+                try:
+                    os.remove(f["file_path"])
+                except OSError:
+                    pass
+        else:
+            # 长回复：先发文本，再发文件
+            tg_send(reply[:3400] + status)
+            for f in pending_files:
+                if f["file_type"] == "photo":
+                    tg_send_photo(chat_id, f["file_path"])
+                else:
+                    tg_send_document(chat_id, f["file_path"])
+                try:
+                    os.remove(f["file_path"])
+                except OSError:
+                    pass
+
+
 # ── HTTP API (POST /ask + GET /stats + GET /health) ─
 class APIHandler(BaseHTTPRequestHandler):
     def do_POST(self):
@@ -285,7 +365,7 @@ class APIHandler(BaseHTTPRequestHandler):
             return self._json(400, {"error": "empty prompt"})
         try:
             messages = build_messages(prompt)
-            reply, status = chat_with_tools(call_llm, messages)
+            reply, status, _ = chat_with_tools(call_llm, messages)
             self._json(200, {"reply": reply, "model": status.strip()})
         except Exception as e:
             self._json(500, {"error": str(e)})
@@ -476,9 +556,9 @@ def main():
                     tg_send("🦞💭...")
                     memory.add_user_message(cid, cmd)
                     messages = build_messages(cmd, chat_id=cid)
-                    reply, status = chat_with_tools(call_llm, messages)
+                    reply, status, pending_files = chat_with_tools(call_llm, messages)
                     memory.add_assistant_message(cid, reply)
-                    tg_send(reply[:3400] + status)
+                    send_reply_with_files(cid, reply, status, pending_files)
                     print(f"reply sent, BUSY={BUSY}", flush=True)
                 finally:
                     BUSY = False
