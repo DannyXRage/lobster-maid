@@ -1,5 +1,5 @@
 FROM python:3.12-slim
-RUN pip install --no-cache-dir requests ddgs
+RUN pip install --no-cache-dir requests ddgs beautifulsoup4 lxml
 WORKDIR /app
 
 COPY bot.py memory.py tools_registry.py tool_calling_loop.py ./

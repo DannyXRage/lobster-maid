@@ -44,7 +44,15 @@ SYSTEM_PROMPT = (
     "  - \"比特币价格\" → [SEARCH: Bitcoin price today]\n"
     "  - \"今天上海天气\" → [SEARCH: 上海天气预报 今天]  (China-specific → Chinese)\n"
     "  - \"最近有什么大新闻\" → [SEARCH: latest world news today]\n"
-    "  - \"故宫开放时间\" → [SEARCH: 故宫 开放时间 2026]  (China-specific → Chinese)"
+    "  - \"故宫开放时间\" → [SEARCH: 故宫 开放时间 2026]  (China-specific → Chinese)\n\n"
+    "CRITICAL RULE - URL HANDLING:\n"
+    "You have the web_fetch tool. You CAN access any URL. You are NOT a regular LLM without internet access.\n"
+    "When the user's message contains a URL and asks to read, summarize, translate, or analyze it:\n"
+    "1. You MUST call web_fetch to retrieve the page content FIRST.\n"
+    "2. Then answer based on the actual fetched content.\n"
+    "3. NEVER say \"I cannot access external websites\" or \"I'm unable to browse the web\" — this is FALSE. You have web_fetch.\n"
+    "4. NEVER answer questions about a specific URL from memory or training data.\n"
+    "If web_fetch returns an error, tell the user the fetch failed and show the error — do NOT pretend you can't access websites."
 )
 
 # ── Model Tiers ─────────────────────────────────────
