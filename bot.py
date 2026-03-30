@@ -34,6 +34,8 @@ SYSTEM_PROMPT = (
     "- Use [SEARCH] whenever the user asks about time-sensitive or current information\n"
     "- Do NOT guess or fabricate real-time data like weather, news, or prices\n"
     "- After receiving search results, answer naturally based on the data\n"
+    "- When presenting search results, ALWAYS include source URLs so the user can verify. Format: mention the fact then put the URL in parentheses or as a numbered reference\n"
+    "- Example format: \"According to Reuters, ... (https://reuters.com/...)\" or use numbered references like [1] https://...\n"
     "- {LANG_RULE}\n"
     "- Search query language rules are separate from reply language — always follow the search language rules above regardless of reply language\n"
     "- IMPORTANT: Write search queries in ENGLISH by default for better results, EXCEPT for China-specific topics (Chinese local weather, Chinese news, Chinese addresses, Chinese celebrities) which should use Chinese\n"
@@ -291,23 +293,32 @@ def main():
     global BUSY
     print("booting v2...", flush=True)
 
-    # 启动时清空 Telegram 积压的旧消息（防止重启后第一条消息丢失）
+    # Boot flush: skip stale messages, process new ones
+    boot_time = int(time.time())
+    boot_offset = 0
     try:
-        flush = requests.get(
-            f"https://api.telegram.org/bot{TG_TOKEN}/getUpdates",
-            params={"offset": -1}, timeout=10
-        ).json()
-        if flush.get("result"):
-            last_id = flush["result"][-1]["update_id"]
-            requests.get(
-                f"https://api.telegram.org/bot{TG_TOKEN}/getUpdates",
-                params={"offset": last_id + 1}, timeout=10
-            )
-            print(f"flushed updates up to {last_id}", flush=True)
-        else:
-            print("no pending updates to flush", flush=True)
+        r = requests.get(f"{TG_API}/getUpdates", params={"timeout": 0})
+        pending = r.json().get("result", [])
+        stale_count = 0
+        for upd in pending:
+            boot_offset = upd["update_id"] + 1
+            msg = upd.get("message") or upd.get("edited_message") or {}
+            msg_time = msg.get("date", 0)
+            if msg_time < boot_time - 5:  # sent >5s before boot = stale
+                stale_count += 1
+                print(f"[boot] skip stale update {upd['update_id']} (age: {boot_time - msg_time}s)", flush=True)
+            else:
+                # New message sent during restart — DON'T skip!
+                print(f"[boot] keeping fresh update {upd['update_id']} (age: {boot_time - msg_time}s)", flush=True)
+                boot_offset = upd["update_id"]  # don't skip this one
+                break  # stop here, let polling loop process from this update onward
+        if stale_count > 0:
+            # Confirm only the stale ones
+            requests.get(f"{TG_API}/getUpdates", params={"offset": boot_offset, "timeout": 0})
+        print(f"[boot] flushed {stale_count} stale, boot_offset={boot_offset}", flush=True)
     except Exception as e:
-        print(f"flush failed: {e}", flush=True)
+        print(f"[boot] flush error: {e}", flush=True)
+        boot_offset = 0
 
     threading.Thread(
         target=lambda: HTTPServer(("0.0.0.0", 8080), APIHandler).serve_forever(),
@@ -316,10 +327,7 @@ def main():
     print("HTTP API on :8080", flush=True)
 
     tg_send("🦞 LobsterMaid v2 online")
-    offset = None
-    data = tg_get()
-    if data.get("result"):
-        offset = data["result"][-1]["update_id"] + 1
+    offset = boot_offset
 
     while True:
         try:

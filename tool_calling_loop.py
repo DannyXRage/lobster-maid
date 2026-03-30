@@ -51,7 +51,7 @@ def chat_with_tools(call_fn, messages):
             messages.append({"role": "assistant", "content": content})
             messages.append({
                 "role": "user",
-                "content": f"[Search Results]\n{json.dumps(result, ensure_ascii=False)}\n\nBased on these search results, answer my original question naturally in the same language I used. Do not use [SEARCH] again unless absolutely necessary.",
+                "content": f"[Search Results]\n{json.dumps(result, ensure_ascii=False)}\n\nBased on these search results, answer my original question naturally in the same language I used. Include source URLs from the results so the user can verify the information. Do not use [SEARCH] again unless absolutely necessary.",
             })
             continue
 
