@@ -1,0 +1,6 @@
+[botdetection.ip_limit]
+# 禁用速率限制（内部使用，无需限制）
+link_token = false
+
+[botdetection.ip_lists]
+pass_ip = ["0.0.0.0/0"]

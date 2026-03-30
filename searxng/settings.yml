@@ -1,0 +1,40 @@
+use_default_settings: true
+
+general:
+  instance_name: "Lobster Search"
+  debug: false
+
+search:
+  safe_search: 0
+  formats:
+    - html
+    - json
+  default_lang: "auto"
+
+server:
+  secret_key: "lobster-searxng-2026"
+  bind_address: "0.0.0.0"
+  port: 8080
+  image_proxy: false
+
+engines:
+  - name: google
+    engine: google
+    shortcut: g
+    disabled: false
+  - name: bing
+    engine: bing
+    shortcut: b
+    disabled: false
+  - name: duckduckgo
+    engine: duckduckgo
+    shortcut: ddg
+    disabled: false
+  - name: wikipedia
+    engine: wikipedia
+    shortcut: wp
+    disabled: false
+  - name: github
+    engine: github
+    shortcut: gh
+    disabled: false

@@ -1,4 +1,12 @@
 services:
+  searxng:
+    image: searxng/searxng:latest
+    container_name: lobster-searxng
+    volumes:
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+      - ./searxng/limiter.toml:/etc/searxng/limiter.toml:ro
+    restart: unless-stopped
+
   lobster-bot:
     build: .
     working_dir: /app
@@ -16,6 +24,8 @@ services:
       - .env
     environment:
       - PYTHONUNBUFFERED=1
+    depends_on:
+      - searxng
     restart: unless-stopped
 
 volumes:
