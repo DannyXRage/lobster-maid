@@ -17,6 +17,7 @@ services:
       - ./tool_calling_loop.py:/app/tool_calling_loop.py:ro
       - ./tools:/app/tools:ro
       - ./stats.json:/app/stats.json
+      - ./auth:/app/auth
       - lobster-memory:/app/data/memory
     ports:
       - "8080:8080"

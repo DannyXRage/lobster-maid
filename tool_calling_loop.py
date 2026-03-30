@@ -33,7 +33,10 @@ def chat_with_tools(call_fn, messages):
                     args = json.loads(tc["function"]["arguments"])
                 except (json.JSONDecodeError, KeyError):
                     args = {}
-                print(f"[tool-A] {fn_name}({args})", flush=True)
+                if fn_name == "login_session":
+                    print(f"[tool-A] login_session(url={args.get('url','?')}, save_as={args.get('save_as','?')}, steps=[redacted])", flush=True)
+                else:
+                    print(f"[tool-A] {fn_name}({args})", flush=True)
                 result = execute_tool(fn_name, args)
                 
                 # 检查是否有文件返回
