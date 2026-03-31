@@ -1,4 +1,16 @@
-use_default_settings: true
+use_default_settings:
+  engines:
+    keep_only:
+      - google
+      - bing
+      - duckduckgo
+      - brave
+      - mojeek
+      - yahoo
+      - yandex
+      - sogou
+      - wikipedia
+      - github
 
 general:
   instance_name: "Lobster Search"
@@ -21,7 +33,7 @@ engines:
   - name: google
     engine: google
     shortcut: g
-    disabled: false
+    disabled: false  # 保留！403 时 SearXNG 自动忽略，恢复后自动生效
   - name: bing
     engine: bing
     shortcut: b
@@ -30,6 +42,27 @@ engines:
     engine: duckduckgo
     shortcut: ddg
     disabled: false
+  - name: brave
+    engine: brave
+    shortcut: br
+    disabled: false
+  - name: mojeek
+    engine: mojeek
+    shortcut: mj
+    disabled: false
+  - name: yahoo
+    engine: yahoo
+    shortcut: yh
+    disabled: false
+  - name: yandex
+    engine: yandex
+    shortcut: yd
+    disabled: false
+  - name: sogou
+    engine: sogou
+    shortcut: sg
+    disabled: false
+    timeout: 6
   - name: wikipedia
     engine: wikipedia
     shortcut: wp
